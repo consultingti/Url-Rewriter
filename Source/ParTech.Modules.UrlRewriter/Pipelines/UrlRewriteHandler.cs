@@ -10,6 +10,10 @@
     using Sitecore.Data.Items;
     using Sitecore.Pipelines.HttpRequest;
 
+    //CG - 2014-6-23
+    using ParTech.Modules.UrlRewriter.data;
+
+
     /// <summary>
     /// Pipeline processor that processes URL rewriter rules.
     /// </summary>
@@ -32,6 +36,11 @@
         /// </summary>
         private static bool rewriteRulesLoaded;
 
+        ///<sumary>
+        ///CG. 2014/6/23 this is for loading the rules from XML
+        ///</sumary>
+        private static RuleException ruleExceptions = new RuleException();
+
         #endregion
 
         /// <summary>
@@ -53,6 +62,13 @@
         /// <param name="args"></param>
         public override void Process(HttpRequestArgs args)
         {
+
+
+            //CG - 2014/6/23 load the xml file
+            this.loadRuleExceptions();
+
+
+
             // Ignore requests that are not GET requests,
             // have the context database set to Core or point to ignored sites
             if (this.IgnoreRequest(args.Context))
@@ -71,6 +87,8 @@
 
             // Try to rewrite the request URL based on Hostname rewrite rules.
             this.RewriteHostName(args);
+
+           
         }
 
         #region Rules loading methods
@@ -147,6 +165,71 @@
         #endregion
 
         #region Rewrite methods
+
+
+        /// <summary>
+        /// CG - 2014/06/23. Add this to the Sitecore module to redirect any type that is not control by .net. for example: PDF
+        /// When the request comes it turns into a 404 that is handle by the custom code of our sitecore solution. 
+        /// Before the code says this is 404 we are intercepting this and checking if is the original URL is a PDF. If it is then the 404 piece is removed (clean-up) so the URL can be use. 
+        /// </summary>
+        /// <param name="uri"></param>
+        /// <returns></returns>
+       private Uri RewriteForceBasedType(Uri uri)
+        {
+
+           if (ruleExceptions.TypeExceptions != null) { 
+            foreach (var ruleException in ruleExceptions.TypeExceptions)
+            {
+                if (uri.AbsoluteUri.Contains(ruleException.name))
+                {
+                    foreach (var subt in ruleException.subTypes)
+                    {
+                        if (uri.AbsoluteUri.Contains(subt.subType))
+                        {
+                            uri = new Uri(uri.Query.Replace("?404;", ""));
+
+                            string stringRequest = uri.AbsoluteUri.Replace(":" + uri.Port.ToString().Trim(), "");
+
+                            uri = new Uri(stringRequest);
+                        }
+                    }
+                }
+            }
+           }
+
+
+           /*if (uri.AbsoluteUri.Contains("404") && uri.AbsoluteUri.Contains(".pdf"))
+            {
+             
+                                
+                uri = new Uri(uri.Query.Replace("?404;", ""));
+
+                string stringRequest = uri.AbsoluteUri.Replace(":" + uri.Port.ToString().Trim(), "");
+
+                uri = new Uri(stringRequest);
+
+              
+            }*/
+
+            return uri;
+        }
+       /// <summary>
+       /// CG - 2014/06/23
+       /// </summary>
+       private void loadRuleExceptions()
+       {
+
+           
+               if (ruleExceptions.TypeExceptions==null) 
+               { 
+                   var teo = new DataRepository();
+
+                   ruleExceptions = teo.ruleExceptions;
+               }
+           
+           
+
+       }
 
         /// <summary>
         /// If configuration allows it and the request URL ends with a slash, 
@@ -244,6 +327,8 @@
             var componentsWithQuery = componentsWithoutQuery | UriComponents.Query;
 
             Uri requestUrl = args.Context.Request.Url;
+            //for 404 caused by a type not handle by .Net - CG
+            requestUrl= this.RewriteForceBasedType(requestUrl);
 
             // If we found a matching URL rewrite rule for the request URL including its querystring,
             // we will rewrite to the exact target URL and dispose the request querystring.

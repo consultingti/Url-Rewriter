@@ -106,12 +106,13 @@
                 return false;
             }
 
-            if (!Uri.IsWellFormedUriString(this.targetUrl, UriKind.RelativeOrAbsolute))
+        /* CG - commented because of Target URL with special character '#'. This line was preventing that to happen. 
+         * if (!Uri.IsWellFormedUriString(this.targetUrl, UriKind.RelativeOrAbsolute))
             {
                 Logging.LogError(string.Format("URL rewrite rule with ID '{0}' is invalid because the Target URL field contains an invalid URL.", this.ItemId), this);
                 return false;
             }
-
+            */
             return true;
         }
 

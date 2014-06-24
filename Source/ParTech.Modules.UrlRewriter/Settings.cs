@@ -188,6 +188,14 @@
         }
 
         /// <summary>
+        /// CG - 2014/6/23 . Created to read the XML location for the RuleExceptions
+        /// </summary>
+        public static string RuleExceptionsFileLocation
+        {
+            get { return settings.GetString("RuleExceptionsFileLocation",false,""); }
+        }
+
+        /// <summary>
         /// Gets an array with site names for which URL rewriting must be skipped.
         /// </summary>
         public static string[] IgnoreForSites
