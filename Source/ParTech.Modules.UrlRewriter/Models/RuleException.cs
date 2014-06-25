@@ -43,7 +43,7 @@ namespace ParTech.Modules.UrlRewriter.Models
     public class SubType
     {
          [XmlElement("SubType")]
-        public string subType { get; set; }
+        public List<string> subType { get; set; }
     }
 
 }

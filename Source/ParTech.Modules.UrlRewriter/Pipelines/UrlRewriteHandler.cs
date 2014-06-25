@@ -182,9 +182,11 @@
             {
                 if (uri.AbsoluteUri.Contains(ruleException.name))
                 {
-                    foreach (var subt in ruleException.subTypes)
+                    foreach (var subts in ruleException.subTypes)
                     {
-                        if (uri.AbsoluteUri.Contains(subt.subType))
+                       foreach(var subt in subts.subType) 
+                        //if (uri.AbsoluteUri.Contains(subt.subType))
+                           if (uri.AbsoluteUri.Contains(subt))
                         {
                             uri = new Uri(uri.Query.Replace("?404;", ""));
 
@@ -192,7 +194,7 @@
 
                             uri = new Uri(stringRequest);
                         }
-                    }
+                    }//
                 }
             }
            }
