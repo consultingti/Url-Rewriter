@@ -1,0 +1,19 @@
+enhancing this module for my Sitecore necesity 
+by relying on the 404 page created for my project. Before giving the 404 error checks 
+the type in the Uri. Based on the types configured in the XML 
+it tries to redirect to the right place, 
+if not then continues to the 404 error page.  
+
+Feel free to use it. 
+
+What was changed:
+1. the XML where the exception rules are
+2. the config file to add a setting for the location of the XML
+3. RuleException.cs. Class which serves kind like a model for loading the XML to an object and cache it to use it in the URL-redirect model
+4. URLRewriteHandler.cs. An update to add the logic to load the RuleExceptions
+5. Settings.cs to add the new setting so it can be read from the config
+6. DataRepository.cs. the only purpose is to read the XML and load it into the RuleExceptions object.
+
+I'll probably do some refactoring, but again feel free to use it if it works for you and change it accordingly.
+
+Thanks to ParTech for providing this sitecore Module, I hope this contribution is good for the project.
