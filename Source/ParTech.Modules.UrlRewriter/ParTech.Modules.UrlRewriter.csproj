@@ -49,6 +49,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Commands\ClearCache.cs" />
+    <Compile Include="data\DataRepository.cs" />
     <Compile Include="Events\ClearCacheEvent.cs" />
     <Compile Include="Events\ClearCacheEventArgs.cs" />
     <Compile Include="Events\ClearCacheEventHandler.cs" />
@@ -56,6 +57,7 @@
     <Compile Include="ItemIds.cs" />
     <Compile Include="Logging.cs" />
     <Compile Include="Models\HostNameRewriteRule.cs" />
+    <Compile Include="Models\RuleException.cs" />
     <Compile Include="Models\UrlRewriteRule.cs" />
     <Compile Include="Pipelines\ApplyHelpNotifications.cs" />
     <Compile Include="Pipelines\UrlRewriteHandler.cs" />
@@ -63,8 +65,12 @@
     <Compile Include="Settings.cs" />
     <Compile Include="UrlRewriterException.cs" />
   </ItemGroup>
+  <ItemGroup>
+    <Content Include="data\ruleExceptions.xml">
+      <SubType>Designer</SubType>
+    </Content>
+  </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
-  <Import Project="$(SolutionDir)..\References\StyleCop\MSBuild\StyleCop.Targets" />
   <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 
        Other similar extension points exist, see Microsoft.Common.targets.
   <Target Name="BeforeBuild">

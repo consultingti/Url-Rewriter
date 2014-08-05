@@ -12,6 +12,8 @@
 
     //CG - 2014-6-23
     using ParTech.Modules.UrlRewriter.data;
+    using Sitecore.Events;
+    using ParTech.Modules.UrlRewriter.Events;
 
 
     /// <summary>
@@ -48,12 +50,26 @@
         /// </summary>
         public static void ClearCache()
         {
-            urlRewriteRulesCache.Clear();
-            hostNameRewriteRulesCache.Clear();
+            try
+            {
 
-            rewriteRulesLoaded = false;
+                if (urlRewriteRulesCache.Count()>0)
+                   urlRewriteRulesCache.Clear();
 
-            Logging.LogInfo("Cleared rewriter rules cache.", typeof(UrlRewriteHandler));
+                if (hostNameRewriteRulesCache.Count()>0)
+                   hostNameRewriteRulesCache.Clear();
+
+                rewriteRulesLoaded = false;
+
+                Logging.LogInfo("Cleared rewriter rules cache.", typeof(UrlRewriteHandler));
+            }
+            catch (Exception ex)
+            {
+                rewriteRulesLoaded = false;
+                Logging.LogError("URL Rewrite - error in the ClearCache: " + ex.Message, typeof(UrlRewriteHandler));
+                
+            }
+
         }
 
         /// <summary>
@@ -63,6 +79,9 @@
         public override void Process(HttpRequestArgs args)
         {
 
+          //CG - 2014-07-29. The enabling and disabling the module feature was not program for some reason. Adding what the creator of the module started when having this setting. 
+            if (Settings.Enabled)
+            { 
 
             //CG - 2014/6/23 load the xml file
             this.loadRuleExceptions();
@@ -87,7 +106,7 @@
 
             // Try to rewrite the request URL based on Hostname rewrite rules.
             this.RewriteHostName(args);
-
+            }
            
         }
 
@@ -99,38 +118,59 @@
         /// <param name="args">HttpRequest pipeline arguments.</param>
         private void LoadRewriteRules(HttpRequestArgs args)
         {
-            if (rewriteRulesLoaded)
+
+            try
             {
-                // Rules are cached and only loaded once when the pipeline processor is called for the first time.
-                // Skip this method if the rules have already been loaded before.
-                return;
-            }
+                if (rewriteRulesLoaded)
+                {
+                    // Rules are cached and only loaded once when the pipeline processor is called for the first time.
+                    // Skip this method if the rules have already been loaded before.
+                    return;
+                }
 
-            // Verify that we can access the context database.
-            if (Context.Database == null)
+                // Verify that we can access the context database.
+                if (Context.Database == null)
+                {
+                    Logging.LogError("Cannot load URL rewrite rules because the Sitecore context database is not set.", this);
+                    return;
+                }
+
+                // Load the rules folder item from Sitecore and verify that it exists.
+                Item rulesFolder = Context.Database.GetItem(Settings.RulesFolderId);
+
+                if ((rulesFolder == null) || (rulesFolder.Axes.GetDescendants().Count()<1))
+                {
+                    Logging.LogError(string.Format("Cannot load URL rewrite rules folder with ID '{0}' from Sitecore. Verify that it exists.", Settings.RulesFolderId), this);
+                    return;
+                }
+
+                // Load the rewrite entries and add them to the cache.
+                //custom code by CG. for avoiding the rules to load twice 2014-07-30. the condition wrapping the rulesFolder.Axe below
+
+                if ((urlRewriteRulesCache != null) && (urlRewriteRulesCache.Count < rulesFolder.Axes.GetDescendants().Count()))
+                {
+
+                    rulesFolder.Axes.GetDescendants()
+                        .ToList()
+                        .ForEach(this.AddRewriteRule);
+
+                }
+                else
+                {
+                    Logging.LogInfo(string.Format("Avoiding adding the Rules twice because of different threads. The count is {0}", urlRewriteRulesCache.Count), this);
+                }
+                //end of custom code by CG. 2014-07-30
+
+                // Remember that the rewrite rules are loaded so we don't load them again during the lifecycle of the application.
+                rewriteRulesLoaded = true;
+
+                Logging.LogInfo(string.Format("Cached {0} URL rewrite rules and {1} hostname rewrite rules.", urlRewriteRulesCache.Count, hostNameRewriteRulesCache.Count), this);
+            }
+            catch (Exception ex)
             {
-                Logging.LogError("Cannot load URL rewrite rules because the Sitecore context database is not set.", this);
-                return;
+                Logging.LogError("URL Rewrite - error in the LoadRewriteRules: " + ex.Message, typeof(UrlRewriteHandler));
+                Event.RaiseEvent("urlrewriter:clearcache", new ClearCacheEventArgs(new ClearCacheEvent()));
             }
-
-            // Load the rules folder item from Sitecore and verify that it exists.
-            Item rulesFolder = Context.Database.GetItem(Settings.RulesFolderId);
-
-            if (rulesFolder == null)
-            {
-                Logging.LogError(string.Format("Cannot load URL rewrite rules folder with ID '{0}' from Sitecore. Verify that it exists.", Settings.RulesFolderId), this);
-                return;
-            }
-
-            // Load the rewrite entries and add them to the cache.
-            rulesFolder.Axes.GetDescendants()
-                .ToList()
-                .ForEach(this.AddRewriteRule);
-
-            // Remember that the rewrite rules are loaded so we don't load them again during the lifecycle of the application.
-            rewriteRulesLoaded = true;
-
-            Logging.LogInfo(string.Format("Cached {0} URL rewrite rules and {1} hostname rewrite rules.", urlRewriteRulesCache.Count, hostNameRewriteRulesCache.Count), this);
         }
 
         /// <summary>
@@ -142,6 +182,8 @@
             // Convert the rewrite rule item to a model object and add to the cache.
             if (rewriteRuleItem.TemplateID.Equals(ItemIds.Templates.UrlRewriteRule))
             {
+
+                
                 // Add a URL rewrite rule.
                 var rule = new UrlRewriteRule(rewriteRuleItem);
 
@@ -176,43 +218,49 @@
         /// <returns></returns>
        private Uri RewriteForceBasedType(Uri uri)
         {
-
-           if (ruleExceptions.TypeExceptions != null) { 
-            foreach (var ruleException in ruleExceptions.TypeExceptions)
+            try
             {
-                if (uri.AbsoluteUri.Contains(ruleException.name))
+                if (ruleExceptions.TypeExceptions != null)
                 {
-                    foreach (var subts in ruleException.subTypes)
+                    foreach (var ruleException in ruleExceptions.TypeExceptions)
                     {
-                       foreach(var subt in subts.subType) 
-                        //if (uri.AbsoluteUri.Contains(subt.subType))
-                           if (uri.AbsoluteUri.Contains(subt))
+                        if (uri.AbsoluteUri.Contains(ruleException.name))
                         {
-                            uri = new Uri(uri.Query.Replace("?404;", ""));
+                            foreach (var subts in ruleException.subTypes)
+                            {
+                                foreach (var subt in subts.subType)
+                                    //if (uri.AbsoluteUri.Contains(subt.subType))
+                                    if (uri.AbsoluteUri.Contains(subt))
+                                    {
+                                        uri = new Uri(uri.Query.Replace("?404;", ""));
 
-                            string stringRequest = uri.AbsoluteUri.Replace(":" + uri.Port.ToString().Trim(), "");
+                                        string stringRequest = uri.AbsoluteUri.Replace(":" + uri.Port.ToString().Trim(), "");
 
-                            uri = new Uri(stringRequest);
+                                        uri = new Uri(stringRequest);
+                                    }
+                            }//
                         }
-                    }//
+                    }
                 }
-            }
-           }
 
 
-           /*if (uri.AbsoluteUri.Contains("404") && uri.AbsoluteUri.Contains(".pdf"))
-            {
+                /*if (uri.AbsoluteUri.Contains("404") && uri.AbsoluteUri.Contains(".pdf"))
+                 {
              
                                 
-                uri = new Uri(uri.Query.Replace("?404;", ""));
+                     uri = new Uri(uri.Query.Replace("?404;", ""));
 
-                string stringRequest = uri.AbsoluteUri.Replace(":" + uri.Port.ToString().Trim(), "");
+                     string stringRequest = uri.AbsoluteUri.Replace(":" + uri.Port.ToString().Trim(), "");
 
-                uri = new Uri(stringRequest);
+                     uri = new Uri(stringRequest);
 
               
-            }*/
-
+                 }*/
+            }
+            catch (Exception ex)
+            {
+                Logging.LogError("URL rewrite - error in RewriteForceBasedType: " + ex.Message, typeof(UrlRewriteHandler));
+            }
             return uri;
         }
        /// <summary>
@@ -221,14 +269,20 @@
        private void loadRuleExceptions()
        {
 
-           
-               if (ruleExceptions.TypeExceptions==null) 
-               { 
+           try
+           {
+               if (ruleExceptions.TypeExceptions == null)
+               {
                    var teo = new DataRepository();
 
                    ruleExceptions = teo.ruleExceptions;
                }
-           
+           }
+           catch (Exception ex)
+           {
+               Logging.LogError("URL rewrite - issue loading the ruleExceptions in the loadRuleExceptions: " + ex.Message, typeof(UrlRewriteHandler));
+           }
+
            
 
        }
@@ -240,34 +294,50 @@
         /// <param name="args">HttpRequest pipeline arguments.</param>
         private void RewriteTrailingSlash(HttpRequestArgs args)
         {
-            // Only rewrite the URL if configuration allows it.
-            if (!Settings.RemoveTrailingSlash)
+            string targetUrl = "";
+            bool good = true;
+            try
             {
-                return;
+                // Only rewrite the URL if configuration allows it.
+                if (!Settings.RemoveTrailingSlash)
+                {
+                    return;
+                }
+
+                // Get the request URL and check for a trailing slash.
+                Uri requestUrl = args.Context.Request.Url;
+
+                if (requestUrl.AbsolutePath == "/" || !requestUrl.AbsolutePath.EndsWith("/"))
+                {
+                    // The root document was requested or no trailing slash was found.
+                    return;
+                }
+
+                // 301-redirect to the same URL, but without trailing slash in the path
+                string domain = requestUrl.GetComponents(UriComponents.Scheme | UriComponents.Host, UriFormat.Unescaped);
+                string path = requestUrl.AbsolutePath.TrimEnd('/');
+                string query = requestUrl.Query;
+                targetUrl = string.Concat(domain, path, query);
+
+                if (Settings.LogRewrites)
+                {
+                    Logging.LogInfo(string.Format("Removed trailing slash from '{0}'.", requestUrl), this);
+                }
+
+                //CG rdirects cannot be in try-catch
+                // Return a permanent redirect to the target URL.
+               // this.Redirect(targetUrl, args.Context);
             }
-
-            // Get the request URL and check for a trailing slash.
-            Uri requestUrl = args.Context.Request.Url;
-
-            if (requestUrl.AbsolutePath == "/" || !requestUrl.AbsolutePath.EndsWith("/"))
+            catch (Exception ex)
             {
-                // The root document was requested or no trailing slash was found.
-                return;
+                Logging.LogError("URL rewrite - error in the RewriteTrailingSlash: " + ex.InnerException.Message, "Partech URL Rewrite");
+                good = false;
             }
-
-            // 301-redirect to the same URL, but without trailing slash in the path
-            string domain = requestUrl.GetComponents(UriComponents.Scheme | UriComponents.Host, UriFormat.Unescaped);
-            string path = requestUrl.AbsolutePath.TrimEnd('/');
-            string query = requestUrl.Query;
-            string targetUrl = string.Concat(domain, path, query);
-
-            if (Settings.LogRewrites)
-            {
-                Logging.LogInfo(string.Format("Removed trailing slash from '{0}'.", requestUrl), this);
-            }
-
+            if (good) { 
             // Return a permanent redirect to the target URL.
+
             this.Redirect(targetUrl, args.Context);
+            }
         }
 
         /// <summary>
@@ -277,39 +347,53 @@
         /// <param name="args">HttpRequest pipeline arguments.</param>
         private void RewriteHostName(HttpRequestArgs args)
         {
-            if (!hostNameRewriteRulesCache.Any())
+            string targetUrl = "";
+            bool good = true;
+            try
             {
-                return;
+                if (!hostNameRewriteRulesCache.Any())
+                {
+                    return;
+                }
+
+                // Extract the hostname from the request URL.
+                Uri requestUrl = args.Context.Request.Url;
+                string hostName = requestUrl.Host;
+
+                // Check if there is a hostname rewrite rule that matches the requested hostname.
+                HostNameRewriteRule rule = hostNameRewriteRulesCache
+                    .FirstOrDefault(x => x.SourceHostName.Equals(hostName, StringComparison.InvariantCultureIgnoreCase));
+
+                if (rule == null)
+                {
+                    // No matching rewrite rule was found.
+                    return;
+                }
+
+                // Set the target URL with the new hostname and the original path and query.
+                string scheme = requestUrl.Scheme;
+                string path = requestUrl.AbsolutePath;
+                string query = requestUrl.Query;
+
+                 targetUrl = string.Concat(scheme, "://", rule.TargetHostName, path, query);
+
+                if (Settings.LogRewrites)
+                {
+                    // Write an entry to the Sitecore log informing about the rewrite.
+                    Logging.LogInfo(string.Format("Hostname rewrite rule '{0}' caused the requested URL '{1}' to be rewritten to '{2}'", rule.ItemId, requestUrl.AbsoluteUri, targetUrl), this);
+                }
+
+                //CG redirects cannot be in try-catch
+                // Return a permanent redirect to the target URL.
+                //this.Redirect(targetUrl, args.Context);
             }
-
-            // Extract the hostname from the request URL.
-            Uri requestUrl = args.Context.Request.Url;
-            string hostName = requestUrl.Host;
-
-            // Check if there is a hostname rewrite rule that matches the requested hostname.
-            HostNameRewriteRule rule = hostNameRewriteRulesCache
-                .FirstOrDefault(x => x.SourceHostName.Equals(hostName, StringComparison.InvariantCultureIgnoreCase));
-
-            if (rule == null)
-            {
-                // No matching rewrite rule was found.
-                return;
-            }
-
-            // Set the target URL with the new hostname and the original path and query.
-            string scheme = requestUrl.Scheme;
-            string path = requestUrl.AbsolutePath;
-            string query = requestUrl.Query;
-
-            string targetUrl = string.Concat(scheme, "://", rule.TargetHostName, path, query);
-
-            if (Settings.LogRewrites)
-            {
-                // Write an entry to the Sitecore log informing about the rewrite.
-                Logging.LogInfo(string.Format("Hostname rewrite rule '{0}' caused the requested URL '{1}' to be rewritten to '{2}'", rule.ItemId, requestUrl.AbsoluteUri, targetUrl), this);
+            catch (Exception ex)
+            { Logging.LogError("URL rewrite - Error in RewriteHostName: " + ex.Message, typeof(UrlRewriteHandler));
+               good = false;
             }
 
             // Return a permanent redirect to the target URL.
+            if (good)
             this.Redirect(targetUrl, args.Context);
         }
 
@@ -319,55 +403,78 @@
         /// <param name="args">HttpRequest pipeline arguments.</param>
         private void RewriteUrl(HttpRequestArgs args)
         {
-            if (!urlRewriteRulesCache.Any())
+             string targetUrl ="";
+            bool good = true;
+            try
             {
-                return;
+                if (!urlRewriteRulesCache.Any())
+                {
+                    return;
+                }
+
+                // Prepare flags to retrieve the URL strings from Uri objects.
+                var componentsWithoutQuery = UriComponents.Scheme | UriComponents.Host | UriComponents.Path;
+                var componentsWithQuery = componentsWithoutQuery | UriComponents.Query;
+
+                Uri requestUrl = args.Context.Request.Url;
+                //for 404 caused by a type not handle by .Net - CG
+                requestUrl = this.RewriteForceBasedType(requestUrl);
+
+                // If we found a matching URL rewrite rule for the request URL including its querystring,
+                // we will rewrite to the exact target URL and dispose the request querystring.
+                // Otherwise, if we found a match for the request URL without its querystring,
+                // we will rewrite the URL and preserve the querystring from the request.
+                bool preserveQueryString = false;
+
+                // Use the request URL including the querystring to find a matching URL rewrite rule.
+                UrlRewriteRule rule = urlRewriteRulesCache.FirstOrDefault(x => this.EqualUrl(x.GetSourceUrl(requestUrl), requestUrl, componentsWithQuery));
+
+                if (rule == null)
+                {
+                    // No match was found, try to find a match for the URL without querystring.
+                    rule = urlRewriteRulesCache.FirstOrDefault(x => this.EqualUrl(x.GetSourceUrl(requestUrl), requestUrl, componentsWithoutQuery));
+
+                    preserveQueryString = rule != null;
+                }
+
+                if (rule == null)
+                {
+                    // No matching rewrite rule was found.
+                    return;
+                }
+
+                // Set the target URL with or without the original request's querystring.
+                 targetUrl = preserveQueryString
+                    ? string.Concat(rule.GetTargetUrl(requestUrl).GetComponents(componentsWithoutQuery, UriFormat.Unescaped), requestUrl.Query)
+                    : rule.GetTargetUrl(requestUrl).GetComponents(componentsWithQuery, UriFormat.Unescaped);
+
+                if (Settings.LogRewrites)
+                {
+                    // Write an entry to the Sitecore log informing about the rewrite.
+                    Logging.LogInfo(string.Format("URL rewrite rule '{0}' caused the requested URL '{1}' to be rewritten to '{2}'", rule.ItemId, requestUrl.AbsoluteUri, targetUrl), "Partech - URL Rewrite");
+                }
+
+                //CG this redirect cannot be in as try-catch
+                // Return a permanent redirect to the target URL.
+                //this.Redirect(targetUrl, args.Context);
             }
-
-            // Prepare flags to retrieve the URL strings from Uri objects.
-            var componentsWithoutQuery = UriComponents.Scheme | UriComponents.Host | UriComponents.Path;
-            var componentsWithQuery = componentsWithoutQuery | UriComponents.Query;
-
-            Uri requestUrl = args.Context.Request.Url;
-            //for 404 caused by a type not handle by .Net - CG
-            requestUrl= this.RewriteForceBasedType(requestUrl);
-
-            // If we found a matching URL rewrite rule for the request URL including its querystring,
-            // we will rewrite to the exact target URL and dispose the request querystring.
-            // Otherwise, if we found a match for the request URL without its querystring,
-            // we will rewrite the URL and preserve the querystring from the request.
-            bool preserveQueryString = false;
-
-            // Use the request URL including the querystring to find a matching URL rewrite rule.
-            UrlRewriteRule rule = urlRewriteRulesCache.FirstOrDefault(x => this.EqualUrl(x.GetSourceUrl(requestUrl), requestUrl, componentsWithQuery));
-
-            if (rule == null)
+            catch (Exception ex)
             {
-                // No match was found, try to find a match for the URL without querystring.
-                rule = urlRewriteRulesCache.FirstOrDefault(x => this.EqualUrl(x.GetSourceUrl(requestUrl), requestUrl, componentsWithoutQuery));
+                //Logging.LogError("URL Rewrite - Error in the RewriteUrl: " + ex.InnerException.Message, "ParTech - URL Rewrite");
+                //Logging.LogError("URL Rewrite - Error in the RewriteUrl. attempting to clear cache of module. Error: " + ex.Message, typeof(UrlRewriteHandler));
+                //Event.RaiseEvent("urlrewriter:clearcache", new ClearCacheEventArgs(new ClearCacheEvent()));
+                Logging.LogInfo("URL Rewrite - Warning in the RewriteUrl. Warning: " + ex.Message, typeof(UrlRewriteHandler));
 
-                preserveQueryString = rule != null;
-            }
-
-            if (rule == null)
-            {
-                // No matching rewrite rule was found.
-                return;
-            }
-
-            // Set the target URL with or without the original request's querystring.
-            string targetUrl = preserveQueryString
-                ? string.Concat(rule.GetTargetUrl(requestUrl).GetComponents(componentsWithoutQuery, UriFormat.Unescaped), requestUrl.Query)
-                : rule.GetTargetUrl(requestUrl).GetComponents(componentsWithQuery, UriFormat.Unescaped);
-
-            if (Settings.LogRewrites)
-            {
-                // Write an entry to the Sitecore log informing about the rewrite.
-                Logging.LogInfo(string.Format("URL rewrite rule '{0}' caused the requested URL '{1}' to be rewritten to '{2}'", rule.ItemId, requestUrl.AbsoluteUri, targetUrl), this);
+                if (ex.Message.Contains("Object reference not set to an instance of an object"))
+                {
+                    Event.RaiseEvent("urlrewriter:clearcache", new ClearCacheEventArgs(new ClearCacheEvent()));
+                    good = false;
+                }
             }
 
             // Return a permanent redirect to the target URL.
-            this.Redirect(targetUrl, args.Context);
+            if (good)
+               this.Redirect(targetUrl, args.Context);
         }
 
         #endregion
@@ -396,17 +503,20 @@
         /// <param name="httpContext">The HTTP context.</param>
         private void Redirect(string url, HttpContext httpContext)
         {
-            if (httpContext == null)
+            if ((url!=null)&& (url.Length>0))
             {
-                Logging.LogError("Cannot redirect because the HttpContext was not set.", this);
-                return;
-            }
+                    if (httpContext == null)
+                    {
+                        Logging.LogError("Cannot redirect because the HttpContext was not set.", "Partech URL Rewrite");
+                        return;
+                    }
 
-            // Return a 301 redirect.
-            httpContext.Response.Clear();
-            httpContext.Response.StatusCode = (int)HttpStatusCode.MovedPermanently;
-            httpContext.Response.RedirectLocation = url;
-            httpContext.Response.End();
+                    // Return a 301 redirect.
+                    httpContext.Response.Clear();
+                    httpContext.Response.StatusCode = (int)HttpStatusCode.MovedPermanently;
+                    httpContext.Response.RedirectLocation = url;
+                    httpContext.Response.End();
+            }
         }
 
         /// <summary>
@@ -416,17 +526,27 @@
         /// <returns></returns>
         private bool IgnoreRequest(HttpContext httpContext)
         {
-            // Only GET request can be rewritten.
-            bool getRequest = httpContext.Request.HttpMethod.Equals("get", StringComparison.InvariantCultureIgnoreCase);
+            try
+            {
+                // Only GET request can be rewritten.
+                bool getRequest = httpContext.Request.HttpMethod.Equals("get", StringComparison.InvariantCultureIgnoreCase);
 
-            // Check if the context database is set to Core.
-            bool coreDatabase = Context.Database != null
-                && Context.Database.Name.Equals(Settings.CoreDatabase, StringComparison.InvariantCultureIgnoreCase);
+                // Check if the context database is set to Core.
+                bool coreDatabase = Context.Database != null
+                    && Context.Database.Name.Equals(Settings.CoreDatabase, StringComparison.InvariantCultureIgnoreCase);
 
-            // CHeck if the context site is in the list of ignored sites.
-            bool ignoredSite = Settings.IgnoreForSites.Contains(Context.GetSiteName().ToLower());
+                // CHeck if the context site is in the list of ignored sites.
+                bool ignoredSite = Settings.IgnoreForSites.Contains(Context.GetSiteName().ToLower());
 
-            return !getRequest || coreDatabase || ignoredSite;
+                return !getRequest || coreDatabase || ignoredSite;
+            }
+            catch (Exception ex)
+            {
+                Logging.LogError("URL Rewrite - error in the IgnoreRequest: " + ex.InnerException.Message, "Partech URL Rewrite");
+                
+            }
+
+            return true;
         }
 
         #endregion
